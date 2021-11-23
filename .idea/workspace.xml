@@ -4,9 +4,10 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/NJU-DisSys-2017.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/NJU-DisSys-2017.iml" afterDir="false" />
+    <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="Update README.md &#10;&#10;准备好开发了">
+      <change afterPath="$PROJECT_DIR$/src/raft/test1.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/raft/test2.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/raft/test3.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -105,7 +106,7 @@
     <property name="node.js.detected.package.tslint" value="true" />
     <property name="node.js.selected.package.eslint" value="(autodetect)" />
     <property name="node.js.selected.package.tslint" value="(autodetect)" />
-    <property name="settings.editor.selected.configurable" value="preferences.pluginManager" />
+    <property name="settings.editor.selected.configurable" value="com.intellij.profiler.configurations.ui.EditProfilerConfigurationsComponent" />
   </component>
   <component name="RunManager" selected="Go 测试.go test raft">
     <configuration default="true" type="Applet" factoryName="Applet">
@@ -224,7 +225,7 @@
       <framework value="gotest" />
       <method v="2" />
     </configuration>
-    <configuration name="go test raft" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
+    <configuration name="go test raft" type="GoTestRunConfiguration" factoryName="Go Test" singleton="false" temporary="true" nameIsGenerated="true">
       <module name="NJU-DisSys-2017" />
       <working_directory value="$PROJECT_DIR$/src/raft" />
       <kind value="PACKAGE" />
@@ -234,8 +235,25 @@
       <framework value="gotest" />
       <method v="2" />
     </configuration>
+    <configuration name="raft 中的 TestInitialElection" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
+      <module name="NJU-DisSys-2017" />
+      <working_directory value="$PROJECT_DIR$/src/raft" />
+      <kind value="PACKAGE" />
+      <package value="raft" />
+      <directory value="$PROJECT_DIR$" />
+      <filePath value="$PROJECT_DIR$" />
+      <framework value="gotest" />
+      <pattern value="^\QTestInitialElection\E$" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Go 测试.go test mapreduce" />
+      <item itemvalue="Go 测试.go test raft" />
+      <item itemvalue="Go 测试.raft 中的 TestInitialElection" />
+    </list>
     <recent_temporary>
       <list>
+        <item itemvalue="Go 测试.raft 中的 TestInitialElection" />
         <item itemvalue="Go 测试.go test raft" />
         <item itemvalue="Go 测试.go test mapreduce" />
       </list>
@@ -298,7 +316,8 @@
       </map>
     </option>
   </component>
-  <component name="VcsContentAnnotationSettings">
-    <option name="myLimit" value="2678400000" />
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Update README.md &#10;&#10;准备好开发了" />
+    <option name="LAST_COMMIT_MESSAGE" value="Update README.md &#10;&#10;准备好开发了" />
   </component>
 </project>

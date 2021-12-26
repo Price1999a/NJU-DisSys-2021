@@ -20,7 +20,6 @@ package raft
 import (
 	"bytes"
 	"encoding/gob"
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -38,6 +37,8 @@ const (
 	STATE_FOLLOWER    = 2
 	STATE_CANDIDATE   = 4
 )
+
+var seedSet bool = false
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -93,8 +94,6 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	//rf.mu.Lock()
-	//defer rf.mu.Unlock()
 	var term int = rf.CurrentTerm
 	var isLeader bool = rf.State == STATE_LEADER
 	return term, isLeader
@@ -146,6 +145,37 @@ type AppendEntriesReply struct {
 	Success bool //如果跟随者所含有的条目和 prevLogIndex 以及 prevLogTerm 匹配上了，则为 true
 }
 
+func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
+	DPrintf("node %d pre-lock AppendEntries", rf.me)
+	rf.mu.Lock()
+	DPrintf("node %d lock AppendEntries", rf.me)
+	defer DPrintf("node %d unlock AppendEntries", rf.me)
+	defer rf.mu.Unlock()
+	reply.Term = rf.CurrentTerm
+	reply.Success = false
+	if args.Term < rf.CurrentTerm {
+		//如果term < currentTerm返回 false
+		DPrintf("node %d receive a outdate AppendEntries", rf.me)
+		return
+	}
+	DPrintf("node %d before rf.resetElectionTimer()", rf.me)
+	rf.resetElectionTimer()
+	DPrintf("node %d after rf.resetElectionTimer()", rf.me)
+	if args.Term > rf.CurrentTerm {
+		//如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态（5.1 节）
+		rf.CurrentTerm = args.Term
+		rf.VotedFor = -1
+		rf.toFollower(args.Term, true)
+	}
+	return
+	//TODO
+}
+
+func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
 //
 // example RequestVote RPC arguments structure.
 // 由候选人负责调用用来征集选票
@@ -173,7 +203,10 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+	DPrintf("node %d pre-lock RequestVote", rf.me)
 	rf.mu.Lock()
+	DPrintf("node %d lock RequestVote", rf.me)
+	defer DPrintf("node %d unlock RequestVote", rf.me)
 	defer rf.mu.Unlock()
 	reply.Term = rf.CurrentTerm
 	reply.VoteGranted = false
@@ -181,6 +214,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		//如果term < currentTerm返回 false
 		return
 	}
+	rf.resetElectionTimer()
 	if args.Term > rf.CurrentTerm {
 		//如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态（5.1 节）
 		rf.CurrentTerm = args.Term
@@ -203,7 +237,7 @@ func JudgeLogNew(term1, index1, term2, index2 int) bool {
 	//true意味着 1比2新
 	//false表示  1和2一样新或1更旧
 	if term1 != term2 {
-		return term1 < term2
+		return term1 > term2
 	} else {
 		return index1 > index2
 	}
@@ -262,26 +296,41 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
+func (rf *Raft) resetElectionTimer() {
+	//DPrintf("resetElectionTimer() 1")
+	//if !rf.ElectionTimer.Stop() {
+	//	//Stop返回false时说明已经超时了
+	//	//DPrintf("resetElectionTimer() 2")
+	//	//<-rf.ElectionTimer.C
+	//}
+	DPrintf("resetElectionTimer() 1")
+	rf.ElectionTimer.Stop()
+	DPrintf("resetElectionTimer() 2")
+	rf.ElectionTimer.Reset(time.Duration(TimeoutTimerRandTime()) * time.Millisecond)
+}
+
 func (rf *Raft) toFollower(term int, reset bool) {
+	if rf.State == STATE_LEADER {
+		rf.HeartBeatTimer.Stop()
+	}
 	rf.State = STATE_FOLLOWER
 	rf.CurrentTerm = term
 	rf.persist()
 	if reset {
-		if !rf.ElectionTimer.Stop() {
-			//Stop返回false时说明已经超时了
-			<-rf.ElectionTimer.C
-		}
-		rf.ElectionTimer.Reset(TimeoutTimerRandTime())
+		rf.resetElectionTimer()
 	}
-	fmt.Printf("node %d to follower with term %d\n", rf.me, rf.CurrentTerm)
+	DPrintf("node %d to follower with term %d, reset states: %t\n", rf.me, rf.CurrentTerm, reset)
 }
 
 func (rf *Raft) toCandidate() {
+	if rf.State == STATE_LEADER {
+		rf.HeartBeatTimer.Stop()
+	}
 	rf.State = STATE_CANDIDATE
 	rf.CurrentTerm++
 	rf.VotedFor = rf.me
 	rf.persist()
-	fmt.Printf("node %d to Candidate\n", rf.me)
+	DPrintf("node %d to Candidate\n", rf.me)
 }
 
 func (rf *Raft) toLeader() {
@@ -292,12 +341,13 @@ func (rf *Raft) toLeader() {
 		rf.NextIndex[i] = len(rf.Log)
 	}
 	rf.HeartBeatTimer = time.NewTimer(HEARTBEAT_TIME * time.Millisecond)
-	fmt.Printf("node %d to Leader\n", rf.me)
+	go rf.HeartBeatLoop()
+	DPrintf("node %d to Leader\n", rf.me)
 }
 
-func TimeoutTimerRandTime() time.Duration {
-	RandElectionTime := MIN_ELECTION_TIME + rand.Intn(MAX_ELECTION_TIME-MIN_ELECTION_TIME)
-	return time.Duration(RandElectionTime) * time.Millisecond
+func TimeoutTimerRandTime() int {
+	//RandElectionTime := MIN_ELECTION_TIME + rand.Intn(MAX_ELECTION_TIME-MIN_ELECTION_TIME)
+	return MIN_ELECTION_TIME + rand.Intn(MAX_ELECTION_TIME-MIN_ELECTION_TIME)
 }
 
 //
@@ -313,7 +363,12 @@ func TimeoutTimerRandTime() time.Duration {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rand.Seed(time.Now().UnixNano())
+	//Debug = 1
+	if !seedSet {
+		rand.Seed(time.Now().UnixNano())
+		seedSet = true
+		DPrintf("set seed\n")
+	}
 
 	rf := &Raft{}
 	rf.peers = peers
@@ -347,11 +402,14 @@ func (rf *Raft) ElectionLoop() {
 	for {
 		select {
 		case <-rf.ElectionTimer.C:
-			fmt.Printf("node %d's electionTimer out\n", rf.me)
+			rf.resetElectionTimer()
+			DPrintf("node %d's electionTimer out\n", rf.me)
 			if rf.State == STATE_LEADER {
 				continue
 			}
+			DPrintf("node %d pre-lock ElectionLoop", rf.me)
 			rf.mu.Lock()
+			DPrintf("node %d lock ElectionLoop", rf.me)
 			rf.toCandidate()
 			var count = 1
 			electionReplyHandler := func(reply *RequestVoteReply) {
@@ -361,12 +419,13 @@ func (rf *Raft) ElectionLoop() {
 						return
 					}
 					if reply.VoteGranted {
+						count++
 						if count >= (len(rf.peers)+1)/2 {
-							rf.toLeader()
-							//todo 发送心跳包
+							if count == (len(rf.peers)+1)/2 {
+								rf.toLeader()
+							}
 							return
 						}
-						count++
 					}
 				}
 			}
@@ -382,12 +441,55 @@ func (rf *Raft) ElectionLoop() {
 							LastLogTerm:  rf.Log[len(rf.Log)-1].Term,
 						}
 						if rf.sendRequestVote(n, args, &reply) {
+							if reply.VoteGranted {
+								DPrintf("node %d agree for node %d\n", n, rf.me)
+							} else {
+								DPrintf("node %d disagree for node %d\n", n, rf.me)
+							}
 							electionReplyHandler(&reply)
 						}
 					}(i)
 				}
 			}
 			rf.mu.Unlock()
+			DPrintf("node %d unlock ElectionLoop", rf.me)
 		}
+	}
+}
+
+func (rf *Raft) HeartBeatLoop() {
+	for {
+		rf.mu.Lock()
+		//DPrintf("node %d lock HeartBeatLoop", rf.me)
+		if rf.State != STATE_LEADER {
+			rf.mu.Unlock()
+			//rf.HeartBeatTimer.Stop()
+			return
+		}
+		for i := 0; i < len(rf.peers); i++ {
+			if i != rf.me {
+				go func(n int) {
+					var args AppendEntriesArgs
+					var reply AppendEntriesReply
+					args = AppendEntriesArgs{
+						Term:         rf.CurrentTerm,
+						LeaderId:     rf.me,
+						PrevLogIndex: 0, //TODO
+						PrevLogTerm:  0, //TODO
+						LeaderCommit: 0, //TODO
+						Entries:      nil,
+					}
+					if rf.sendAppendEntries(n, args, &reply) {
+						DPrintf("node %d sendAppendEntries to node %d success\n", rf.me, n)
+						//TODO 处理reply
+					}
+				}(i)
+			} else {
+				//rf.resetElectionTimer()
+			}
+		}
+		rf.mu.Unlock()
+		<-rf.HeartBeatTimer.C
+		rf.HeartBeatTimer.Reset(HEARTBEAT_TIME * time.Millisecond)
 	}
 }

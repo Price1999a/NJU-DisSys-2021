@@ -20,6 +20,7 @@ package raft
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -31,7 +32,7 @@ import "labrpc"
 // import "encoding/gob"
 
 const (
-	HEARTBEAT_TIME    = 125
+	HEARTBEAT_TIME    = 100
 	MIN_ELECTION_TIME = 200
 	MAX_ELECTION_TIME = 400
 	STATE_LEADER      = 1
@@ -95,6 +96,8 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	var term int = rf.CurrentTerm
 	var isLeader bool = rf.State == STATE_LEADER
 	return term, isLeader
@@ -164,6 +167,13 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 	//DPrintf("node %d after rf.resetElectionTimer()", rf.me)
 	if args.Term > rf.CurrentTerm {
 		//如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态（5.1 节）
+		rf.toFollower(args.Term, true)
+	}
+	if rf.State == STATE_LEADER {
+		rf.toFollower(args.Term, true)
+		return
+	}
+	if rf.State == STATE_CANDIDATE {
 		rf.toFollower(args.Term, true)
 	}
 	if args.PrevLogIndex >= len(rf.Log) {
@@ -340,9 +350,9 @@ func (rf *Raft) resetElectionTimer() {
 	//	//DPrintf("resetElectionTimer() 2")
 	//	//<-rf.ElectionTimer.C
 	//}
-	DPrintf("resetElectionTimer() 1")
+	//DPrintf("resetElectionTimer() 1")
 	rf.ElectionTimer.Stop()
-	DPrintf("resetElectionTimer() 2")
+	//DPrintf("resetElectionTimer() 2")
 	rf.ElectionTimer.Reset(time.Duration(TimeoutTimerRandTime()) * time.Millisecond)
 }
 
@@ -475,7 +485,12 @@ func (rf *Raft) ElectionLoop() {
 			}
 			for i := 0; i < len(rf.peers); i++ {
 				if i != rf.me {
-					go func(n int) {
+					go func(n int, term_copy int) {
+						rf.mu.Lock()
+						if rf.State != STATE_CANDIDATE || rf.CurrentTerm != term_copy {
+							rf.mu.Unlock()
+							return
+						}
 						var reply RequestVoteReply
 						var args RequestVoteArgs
 						args = RequestVoteArgs{
@@ -484,6 +499,7 @@ func (rf *Raft) ElectionLoop() {
 							LastLogIndex: len(rf.Log),
 							LastLogTerm:  rf.Log[len(rf.Log)-1].Term,
 						}
+						rf.mu.Unlock()
 						if rf.sendRequestVote(n, args, &reply) {
 							if reply.VoteGranted {
 								DPrintf("node %d agree for node %d\n", n, rf.me)
@@ -491,10 +507,12 @@ func (rf *Raft) ElectionLoop() {
 								DPrintf("node %d disagree for node %d\n", n, rf.me)
 							}
 							if args.Term == rf.CurrentTerm && rf.State == STATE_CANDIDATE {
+								rf.mu.Lock()
 								electionReplyHandler(&reply)
+								rf.mu.Unlock()
 							}
 						}
-					}(i)
+					}(i, rf.CurrentTerm)
 				}
 			}
 			rf.mu.Unlock()
@@ -516,11 +534,21 @@ func (rf *Raft) HeartBeatLoop() {
 		}
 		for i := 0; i < len(rf.peers); i++ {
 			if i != rf.me {
-				go func(n int) {
+				go func(n int, term_copy int) {
+					rf.mu.Lock()
+					if rf.State != STATE_LEADER || rf.CurrentTerm != term_copy {
+						rf.mu.Unlock()
+						return
+					}
 					var args AppendEntriesArgs
 					var reply AppendEntriesReply
 					if rf.NextIndex[n] > len(rf.Log) {
-						rf.NextIndex[n] = len(rf.Log)
+						//rf.NextIndex[n] = len(rf.Log)
+						//rf.MatchIndex[i] = 0
+						fmt.Printf("waring: rf.NextIndex[n] > len(rf.Log)\n")
+						rf.toFollower(rf.CurrentTerm, true)
+						rf.mu.Unlock()
+						return
 					}
 					args = AppendEntriesArgs{
 						Term:         rf.CurrentTerm,
@@ -530,7 +558,10 @@ func (rf *Raft) HeartBeatLoop() {
 						LeaderCommit: rf.CommitIndex,
 						Entries:      rf.Log[rf.NextIndex[n]:],
 					}
+					rf.mu.Unlock()
 					if rf.sendAppendEntries(n, args, &reply) {
+						rf.mu.Lock()
+						defer rf.mu.Unlock()
 						DPrintf("node %d sendAppendEntries to node %d success\n", rf.me, n)
 						if reply.Term > rf.CurrentTerm {
 							rf.toFollower(reply.Term, true)
@@ -556,7 +587,6 @@ func (rf *Raft) HeartBeatLoop() {
 								//fmt.Printf("node: %v after success reply from %v: CommitIndex to  %v\n", rf.me, n, rf.CommitIndex)
 							}
 							//领导人将创建的日志条目复制到大多数的服务器上的时候，日志条目就会被提交
-
 						} else {
 							//找到最后两者达成一致的地方，然后删除跟随者从那个点之后的所有日志条目
 							for args.PrevLogIndex > 0 && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
@@ -565,7 +595,7 @@ func (rf *Raft) HeartBeatLoop() {
 							rf.NextIndex[n] = args.PrevLogIndex + 1
 						}
 					}
-				}(i)
+				}(i, rf.CurrentTerm)
 			} else {
 				rf.resetElectionTimer()
 				rf.NextIndex[i] = len(rf.Log)
